@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>Heads Breakout — Smash the Faces</title>
+<style>
+  :root{ --bg:#f0f4ff; --fg:#333; }
+  html,body{
+    height:100%;margin:0;
+    background:linear-gradient(180deg, #fefefe 0%, #d7eaff 100%);
+    color:var(--fg);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 Roboto, Helvetica, Arial, sans-serif;
+  }
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  .hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);
+       background:rgba(255,255,255,.7);border:1px solid rgba(0,0,0,.1);
+       padding:8px 12px;border-radius:12px;font-weight:800;z-index:3}
+  .overlay{position:fixed;inset:0;display:grid;place-items:center;
+       background:rgba(255,255,255,.9);backdrop-filter:blur(6px);z-index:10}
+  .hidden{display:none!important}
+  .panel{width:min(92vw,820px);border:1px solid rgba(0,0,0,.1);border-radius:18px;
+       overflow:hidden;background:linear-gradient(180deg, #fff, #f0f0f0);
+       box-shadow:0 12px 40px rgba(0,0,0,.15)}
+  .panel-h{padding:18px 22px;font-size:clamp(22px,3.5vw,32px);font-weight:900;text-align:center}
+  .panel-b{padding:16px 22px;color:#444;text-align:center}
+  .btnrow{display:flex;gap:12px;justify-content:center;padding:0 22px 18px}
+  .btn{cursor:pointer;border:0;border-radius:14px;padding:12px 18px;font-weight:900}
+  .btn.primary{background:linear-gradient(180deg,#6cf0ff,#2ac7ff);color:#00223a;box-shadow:0 10px 30px rgba(44,199,255,.35)}
+  .donate{display:grid;gap:6px;margin-top:12px;font-size:14px;text-align:left}
+  .donate a{display:inline-block;text-decoration:none;background:rgba(0,0,0,.05);
+            border:1px solid rgba(0,0,0,.12);padding:4px 8px;border-radius:8px;
+            color:#d6336c;font-weight:800}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div class="hud" id="hud">❤ <span id="lives">3</span> • Score <span id="score">0</span> • Level <span id="level">1</span></div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <div class="panel-h" id="menuTitle">Heads Breakout — Smash the Faces</div>
+    <div class="panel-b" id="menuText">
+      <p>Bounce the ball and smash through a wall of heads. Press Space to launch!</p>
+      <p>If you like this game, please consider a donation:</p>
+      <div class="donate">
+        <div>CashApp <a href="https://cash.app/$GrooveTime100" target="_blank">$GrooveTime100</a></div>
+        <div>PayPal <a href="https://www.paypal.me/GrooveTime100" target="_blank">PayPal.me/GrooveTime100</a></div>
+        <div>Venmo <a href="https://venmo.com/u/GrooveTime100" target="_blank">@GrooveTime100</a></div>
+      </div>
+    </div>
+    <div class="btnrow"><button class="btn primary" id="startBtn">Start</button></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const cv=document.getElementById('cv'), g=cv.getContext('2d');
+  const livesEl=document.getElementById('lives'), scoreEl=document.getElementById('score'), levelEl=document.getElementById('level');
+  const menu=document.getElementById('menu'), startBtn=document.getElementById('startBtn');
+  const menuTitle=document.getElementById('menuTitle');
+
+  function fit(){ const dpr=Math.max(1,Math.min(2,devicePixelRatio||1)); cv.width=innerWidth*dpr; cv.height=innerHeight*dpr; cv.style.width=innerWidth+'px'; cv.style.height=innerHeight+'px'; g.setTransform(dpr,0,0,dpr,0,0); }
+  fit(); addEventListener('resize',fit);
+  const W=()=>innerWidth, H=()=>innerHeight;
+
+  // sound
+  const AC=window.AudioContext||window.webkitAudioContext; const ac=new AC(); const master=ac.createGain(); master.gain.value=0.25; master.connect(ac.destination);
+  function bleep(f=660,t=.08){ const o=ac.createOscillator(),ga=ac.createGain(); o.connect(ga).connect(master); o.type='square'; o.frequency.value=f; ga.gain.value=.3; o.start(); ga.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+t); o.stop(ac.currentTime+t+.02); }
+
+  // game state
+  let lives=3, score=0, level=1;
+  const pad={ w:120, h:24, x:W()/2, y:H()-60 };
+  const ball={ x:W()/2, y:H()/2, r:8, vx:220, vy:-240, fire:false, stuck:true };
+  const keys=new Set();
+  addEventListener('keydown',e=>{ keys.add(e.key.toLowerCase()); if(ball.stuck && e.code==="Space"){ ball.stuck=false; bleep(800);} });
+  addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+  let touch=null;
+  addEventListener('touchstart',e=>{ const t=e.changedTouches[0]; if(!t) return; ac.resume(); touch={id:t.identifier,x:t.clientX}; if(ball.stuck){ ball.stuck=false; bleep(800);} });
+  addEventListener('touchmove',e=>{ for(const t0 of e.changedTouches){ if(touch && t0.identifier===touch.id) touch.x=t0.clientX; } },{passive:true});
+  addEventListener('touchend',e=>{ for(const t0 of e.changedTouches){ if(touch && t0.identifier===touch.id) touch=null; } });
+
+  // 🎭 heads-only emojis
+  const EMOJIS=['😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','😘','😗','😙','😚','🙂','🤗','🤔','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','😴','😌','😛','😜','😝','🤤','😒','😓','😔','😕','🙃','🤑','😲','☹️','🙁','😖','😞','😟','😤','😢','😭','😦','😧','😨','😩','🤯','😬','😰','😱','🥵','🥶','😳','🤪','😵','😡','😠'];
+  const ROW_COLORS=['#ff6b6b','#ffa94d','#ffd93d','#6bcf63','#4dabf7','#845ef7','#ff85d0'];
+  let bricks=[];
+
+  function makeLevel(){
+    bricks.length=0;
+    const cols=14;
+    const baseRows=5;
+    const extraRows=Math.min(level-1,6);
+    const rows=baseRows+extraRows;
+    const bw=W()/cols, bh=38;
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const x=c*bw, y=70 + r*bh;
+        const hp = r<2 ? 1 : r<4 ? 2 : 3;
+        const emo = EMOJIS[(r*cols+c)%EMOJIS.length];
+        const color=ROW_COLORS[r % ROW_COLORS.length];
+        bricks.push({x,y,w:bw,h:bh,hp,emo,color});
+      }
+    }
+    resetBall();
+  }
+
+  function resetBall(){ ball.x=pad.x; ball.y=pad.y-20; ball.vx=220*(Math.random()<.5?-1:1); ball.vy=-240; ball.fire=false; ball.stuck=true; }
+
+  const powerups=[];
+  function spawnPU(x,y){ const roll=Math.random(); const type=roll<.34?'wide':roll<.67?'fire':'life'; powerups.push({x,y,vy:80,type}); }
+
+  let running=false;
+  function start(){ ac.resume(); lives=3; score=0; level=1; makeLevel(); running=true; menu.classList.add('hidden'); loop(); }
+  startBtn.addEventListener('click',()=>{ if(!running) start(); });
+
+  function loop(){ if(!running) return; update(1/60); render(); requestAnimationFrame(loop); }
+
+  function update(dt){
+    let ax=0; if(keys.has('arrowleft')||keys.has('a')) ax-=1; if(keys.has('arrowright')||keys.has('d')) ax+=1;
+    if(touch){ const dx=touch.x - pad.x; ax += Math.max(-1, Math.min(1, dx/140)); }
+    pad.x += ax*450*dt; pad.x=Math.max(pad.w/2, Math.min(W()-pad.w/2, pad.x));
+
+    if(ball.stuck){ ball.x=pad.x; ball.y=pad.y-20; }
+    else { ball.x+=ball.vx*dt; ball.y+=ball.vy*dt; }
+
+    if(ball.x-ball.r<0){ ball.x=ball.r; ball.vx*=-1; bleep(600);}
+    if(ball.x+ball.r>W()){ ball.x=W()-ball.r; ball.vx*=-1; bleep(600);}
+    if(ball.y-ball.r<0){ ball.y=ball.r; ball.vy*=-1; bleep(540);}
+
+    if(ball.y+ball.r>pad.y-pad.h/2 && ball.y-ball.r<pad.y+pad.h/2 && ball.x>pad.x-pad.w/2 && ball.x<pad.x+pad.w/2){
+      ball.y=pad.y-pad.h/2-ball.r;
+      const hit=(ball.x-pad.x)/(pad.w/2);
+      const speed=Math.hypot(ball.vx,ball.vy)*1.03;
+      const angle=hit*0.8;
+      ball.vx=Math.sin(angle)*speed; ball.vy=-Math.cos(angle)*speed;
+      bleep(760);
+    }
+
+    if(ball.y-ball.r>H()){ 
+      lives--; 
+      livesEl.textContent=lives; 
+      bleep(300);
+
+      // reset paddle size when you miss
+      pad.w = 120;
+
+      if(lives<=0){ 
+        running=false; 
+        menuTitle.textContent="Game Over"; 
+        menu.classList.remove('hidden'); 
+        startBtn.textContent="Play Again"; 
+        return; 
+      }
+      resetBall();
+    }
+
+    for(let i=bricks.length-1;i>=0;i--){ const b=bricks[i];
+      if(ball.x>b.x && ball.x<b.x+b.w && ball.y>b.y && ball.y<b.y+b.h){
+        if(!ball.fire){ ball.vy*=-1; }
+        b.hp--; score+=10; scoreEl.textContent=score; bleep(880 - b.hp*120);
+        if(b.hp<=0){ if(Math.random()<0.12) spawnPU(b.x+b.w/2,b.y); bricks.splice(i,1);}
+      }
+    }
+
+    for(let i=powerups.length-1;i>=0;i--){ const p=powerups[i]; p.y+=p.vy*dt;
+      if(p.y>H()+20){ powerups.splice(i,1); continue;}
+      if(p.y>pad.y-14 && p.x>pad.x-pad.w/2 && p.x<pad.x+pad.w/2){
+        if(p.type==='wide'){ pad.w=Math.min(pad.w+60,220);}
+        if(p.type==='fire'){ ball.fire=true; setTimeout(()=>ball.fire=false,6000);}
+        if(p.type==='life'){ lives=Math.min(9,lives+1); livesEl.textContent=lives;}
+        bleep(980); powerups.splice(i,1);
+      }
+    }
+
+    if(bricks.length===0){ level++; levelEl.textContent=level; score+=200; scoreEl.textContent=score; makeLevel(); }
+
+    livesEl.textContent=lives; levelEl.textContent=level; scoreEl.textContent=score;
+  }
+
+  function render(){
+    g.clearRect(0,0,W(),H());
+    g.fillStyle='#39ff14';
+    g.fillRect(pad.x-pad.w/2,pad.y-pad.h/2,pad.w,pad.h);
+
+    g.fillStyle=ball.fire?'#FFD166':'#333';
+    g.beginPath(); g.arc(ball.x,ball.y,ball.r,0,Math.PI*2); g.fill();
+
+    g.textAlign='center'; g.textBaseline='middle';
+    for(const b of bricks){ const cx=b.x+b.w/2, cy=b.y+b.h/2, r=Math.min(b.w,b.h)/2-2;
+      g.beginPath(); g.fillStyle=b.color; g.arc(cx,cy,r,0,Math.PI*2); g.fill();
+      g.font=`${r*1.4}px serif`; g.fillText(b.emo,cx,cy+1);
+    }
+
+    for(const p of powerups){ g.font='26px serif'; const sym=p.type==='wide'?'⭐':p.type==='fire'?'🔥':'💖'; g.fillText(sym,p.x,p.y); }
+  }
+})();
+</script>
+</body>
+</html>
